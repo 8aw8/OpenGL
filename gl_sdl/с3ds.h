@@ -1,0 +1,23 @@
+#include <lib3ds.h>
+
+
+typedef GLfloat Lib3dsVector[3];
+
+static int  log_level = LIB3DS_LOG_INFO;
+
+void matrix_dump(GLfloat matrix[16]) ;
+
+//static long fileio_seek_func(void *self, long offset, Lib3dsIoSeek origin); 
+//static long fileio_tell_func(void *self);
+//static size_t fileio_read_func(void *self, void *buffer, size_t size); 
+//static size_t fileio_write_func(void *self, const void *buffer, size_t size); 
+//static void fileio_log_func(void *self, Lib3dsLogLevel level, int indent, const char *msg);
+
+Lib3dsFile* Load3ds(const char* filename);
+void mesh_dump(Lib3dsMesh *mesh);
+GLuint GL_DrawMesh(Lib3dsMesh *mesh);
+GLuint GL_DrawMesh_SSE(Lib3dsMesh *mesh);
+
+
+
+

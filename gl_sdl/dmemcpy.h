@@ -1,0 +1,12 @@
+#ifndef _DMEMCPY_H
+#define _DMEMCPY_H  1
+
+extern void *(* nmemcpy)(void *to, const void *from, size_t len);
+void *sse_memcpy_32(void *to, const void *from, size_t len);
+void *sse_memcpy_64(void *to, const void *from, size_t len);
+void *mmx_memcpy_32(void *to, const void *from, size_t len);
+void *mmx_memcpy_64(void *to, const void *from, size_t len);
+int check_opt_flag(void);
+
+#endif
+

@@ -1,0 +1,663 @@
+#ifdef _WIN32
+  #define SDL_main main
+  #include <windows.h>
+#endif
+
+#ifdef _MSC_VER
+   #pragma warning ( disable : 4996 )
+#endif
+
+#include <iostream>
+#include <string>
+#include "SDL/SDL.h"
+#include "SDL/SDL_ttf.h" 
+#include "GL/gl.h"
+#include "GL/glu.h"
+//#include "GL/glut.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include "с3ds.h"
+
+
+
+typedef struct tag_VERTEX_DATA
+{
+  float color[4];
+  float normal[3];
+  float vertex[3];
+}VERTEX_DATA;
+VERTEX_DATA * pData;
+//glInterleavedArrays (GL_C4F_N3F_V3F, 0, pData);
+
+
+GLfloat xrf, yrf, zrf;
+GLfloat angleX,angleY=0;
+unsigned char pixel[3];
+
+int fps=0;
+int mx,my;
+int winWidth = 1024;
+int winHeight = 768;
+
+GLfloat  light0Amb[4] =  { 1.0f, 0.6f, 0.2f, 1.0f };
+GLfloat  light0Dif[4] =  { 1.0f, 0.6f, 0.2f, 1.0f };
+GLfloat  light0Spec[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+GLfloat  light0Pos[4] =  { 0.0f, 0.0f, 0.0f, 1.0f };
+
+GLfloat  light1Amb[4] =  { 0.0f, 0.0f, 0.0f, 1.0f };
+GLfloat  light1Dif[4] =  { 1.0f, 1.0f, 1.0f, 1.0f };
+GLfloat  light1Spec[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+GLfloat  light1Pos[4] =  { 0.0f, 5.0f, 5.0f, 0.0f };
+
+GLfloat  materialAmb[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+GLfloat  materialDif[4] = { 0.63f, 0.57f, 0.60f, 1.0f };
+GLfloat  materialSpec[4] = { 0.99f, 0.91f, 0.81f, 1.0f };
+GLfloat  materialShininess = 27.8f;
+
+GLfloat color1[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+GLuint gl_Lists[256]; 
+
+GLuint texture[5];
+GLuint ls_qube;
+GLUquadricObj *quadObj;
+
+
+Uint32 old_time, current_time;
+float ftime;
+SDL_Surface *TextureImage[1];
+SDL_mutex  *lock;
+TTF_Font *Font;
+
+static const char* filename = 0;
+static const char* output = 0;
+static unsigned flags = 0;
+Lib3dsFile *f;
+
+
+void DrawGLScene();
+Uint32 my_callbackfunc(Uint32 interval, void *param);
+void* my_callback_param;
+
+
+int test_inverse()
+{
+	int Failed(0);
+
+	glm::mat4x4 A4x4(
+		glm::vec4(1, 0, 1, 0), 
+		glm::vec4(0, 1, 0, 0), 
+		glm::vec4(0, 0, 1, 0), 
+		glm::vec4(0, 0, 0, 1));
+	glm::mat4x4 B4x4 = glm::inverse(A4x4);
+	glm::mat4x4 I4x4 = A4x4 * B4x4;
+	Failed += I4x4 == glm::mat4x4(1) ? 0 : 1;
+
+	glm::mat3x3 A3x3(
+		glm::vec3(1, 0, 1), 
+		glm::vec3(0, 1, 0), 
+		glm::vec3(0, 0, 1));
+	glm::mat3x3 B3x3 = glm::inverse(A3x3);
+	glm::mat3x3 I3x3 = A3x3 * B3x3;
+	Failed += I3x3 == glm::mat3x3(1) ? 0 : 1;
+
+	glm::mat2x2 A2x2(
+		glm::vec2(1, 1), 
+		glm::vec2(0, 1));
+	glm::mat2x2 B2x2 = glm::inverse(A2x2);
+	glm::mat2x2 I2x2 = A2x2 * B2x2;
+	Failed += I2x2 == glm::mat2x2(1) ? 0 : 1;
+
+	return Failed;
+}
+
+void DrawRectangle(int left, int right, int top, int bottom, SDL_Color c, GLuint Texture)
+{
+    glBindTexture(GL_TEXTURE_2D, Texture);
+    
+    glColor4f(c.r/255.0f, c.g/255.0f, c.b/255.0f, c.unused/255.0f);
+    
+    glBegin(GL_QUADS);
+
+    //Top-left vertex (corner) 
+    glTexCoord2i(0, 0);
+    glVertex2f(GLfloat(left), GLfloat(top));
+
+    //Top-right vertex (corner)
+    glTexCoord2i(1, 0);
+    glVertex2f(GLfloat(right), GLfloat(top));
+
+    //Bottom-right vertex (corner)
+    glTexCoord2i(1, 1);
+    glVertex2f(GLfloat(right), GLfloat(bottom));
+
+    //Bottom-left vertex (corner)
+    glTexCoord2i(0, 1);
+    glVertex2f(GLfloat(left), GLfloat(bottom));
+
+    glEnd();
+}
+
+GLuint SDLSurfaceToTexture(SDL_Surface* surface)
+{
+    GLuint texture;
+    GLint nOfColors;
+    GLenum texture_format;
+
+    // get the number of channels in the SDL surface
+    nOfColors = surface->format->BytesPerPixel;
+
+    if (nOfColors == 4)     // contains an alpha channel
+    {
+        if (surface->format->Rmask == 0x000000ff)
+            texture_format = GL_RGBA;
+        else
+            texture_format = GL_BGRA;
+    } 
+    else if (nOfColors == 3)
+    {
+        if (surface->format->Rmask == 0x000000ff)
+            texture_format = GL_RGB;
+        else
+            texture_format = GL_BGR;
+    }
+    else
+    {
+        printf("Picture with less than 24-bit color depth detected.\n");
+        return 0;
+    }
+
+    // Have OpenGL generate a texture object handle for us
+    glGenTextures(1, &texture);
+
+    // Bind the texture object
+    glBindTexture(GL_TEXTURE_2D, texture); 
+
+    // Set the texture's stretching properties
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Edit the texture object's image data using the information SDL_Surface gives us
+    glTexImage2D(GL_TEXTURE_2D, 0, nOfColors, surface->w, surface->h, 0,
+    texture_format, GL_UNSIGNED_BYTE, surface->pixels);
+
+    // Bind the texture to which subsequent calls refer to
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    return texture;
+}
+
+void DrawTextGL(int left, int top, TTF_Font* font, char* text)
+{
+    SDL_Color color = {255, 255, 255, 255};
+    SDL_Surface* textSurface;
+    textSurface = TTF_RenderText_Blended(font, text, color);
+    GLuint Texture = SDLSurfaceToTexture(textSurface);
+    
+    SDL_Color Color={255, 255, 255,255};
+    
+    
+    DrawRectangle(left, left + 260, top, top + 80, Color, Texture);
+
+    SDL_FreeSurface(textSurface);
+    glDeleteTextures(1, &Texture);
+}
+
+GLuint LoadTexture(const char* FilePath)
+{
+    SDL_Surface *Image;
+    /* Load The Bitmap, Check For Errors, If Bitmap's Not Found Quit */
+    if ( ( Image = SDL_LoadBMP( FilePath) ) )
+    {
+        /* Create The Texture */
+        GLuint texture_id=0;
+
+        glEnable(GL_TEXTURE_2D);
+        glGenTextures( 1, &texture_id);
+
+        /* Typical Texture Generation Using Data From The Bitmap */
+        glBindTexture( GL_TEXTURE_2D, texture_id);
+
+
+        /* Generate The Texture */
+        glTexImage2D( GL_TEXTURE_2D, 0, 3, Image->w, Image->h, 0,GL_BGR,GL_UNSIGNED_BYTE, Image->pixels);
+	
+        /* Linear Filtering */
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+     //    glTexGenf(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
+     //    glTexGenf(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
+     //    glEnable(GL_TEXTURE_GEN_S);     // Enable spherical
+     //    glEnable(GL_TEXTURE_GEN_T);     // Environment Mapping
+
+        return texture_id;
+    }
+    else return -1;
+}
+void glLoadPrimitive()
+{
+    ls_qube=glGenLists(1);
+    glNewList(ls_qube,GL_COMPILE);
+    glBegin(GL_QUADS);
+    glNormal3f(0.0f, 0.0f, 1.0f);// �������� �����
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, 1.0f);	// ��� ����
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex3f( 1.0f, -1.0f, 1.0f);	// ��� �����
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex3f( 1.0f, 1.0f, 1.0f);	// ���� �����
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex3f(-1.0f, 1.0f, 1.0f);	// ���� ����
+
+    glNormal3f( 0.0f, 0.0f,-1.0f);// ������ �����
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, -1.0f);	// ��� �����
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex3f(-1.0f, 1.0f, -1.0f);	// ���� �����
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex3f( 1.0f, 1.0f, -1.0f);	// ���� ����
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f( 1.0f, -1.0f, -1.0f);	// ��� ����
+
+    glNormal3f( 0.0f, 1.0f, 0.0f);// ������� �����
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex3f(-1.0f, 1.0f, -1.0f);	// ���� ����
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f(-1.0f, 1.0f, 1.0f);	// ��� ����
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex3f( 1.0f, 1.0f, 1.0f);	// ��� �����
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex3f( 1.0f, 1.0f, -1.0f);	// ���� �����
+
+    glNormal3f( 0.0f,-1.0f, 0.0f);// ������ �����
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex3f(-1.0f, -1.0f, -1.0f);	// ���� �����
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex3f( 1.0f, -1.0f, -1.0f);	// ���� ����
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f( 1.0f, -1.0f, 1.0f);	// ��� ����
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, 1.0f);	// ��� �����
+
+    glNormal3f( 1.0f, 0.0f, 0.0f);// ������ �����
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex3f( 1.0f, -1.0f, -1.0f);	// ��� �����
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex3f( 1.0f, 1.0f, -1.0f);	// ���� �����
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex3f( 1.0f, 1.0f, 1.0f);	// ���� ����
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f( 1.0f, -1.0f, 1.0f);	// ��� ����
+
+    glNormal3f(-1.0f, 0.0f, 0.0f);// ����� �����
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, -1.0f);	// ��� ����
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, 1.0f);	// ��� �����
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex3f(-1.0f, 1.0f, 1.0f);	// ���� �����
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex3f(-1.0f, 1.0f, -1.0f);	// ���� ����
+    glEnd();
+    glEndList();
+}
+void glInit(void)
+{
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearDepth(1.0f);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_DEPTH_TEST);
+    glShadeModel(GL_SMOOTH);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+  
+    gluPerspective(45.0f, winWidth/winHeight,0.1f,100.0f);
+    glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+    glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_TEXTURE_2D);
+
+
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+
+    glEnable (GL_LIGHT0);
+//  glEnable (GL_LIGHT1);
+// glLightfv (GL_LIGHT0, GL_AMBIENT, light0Amb);
+//  glLightfv (GL_LIGHT0, GL_DIFFUSE, light0Dif);
+//  glLightfv (GL_LIGHT0, GL_SPECULAR, light0Spec);
+// glLightfv (GL_LIGHT0, GL_POSITION, light0Pos);
+//  glLightfv (GL_LIGHT1, GL_AMBIENT, light1Amb);
+//  glLightfv (GL_LIGHT1, GL_DIFFUSE, light1Dif);
+//  glLightfv (GL_LIGHT1, GL_SPECULAR, light1Spec);
+//  glLightfv (GL_LIGHT1, GL_POSITION, light1Pos);
+    glLightModelf (GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);
+    glMaterialfv (GL_FRONT_AND_BACK, GL_AMBIENT, materialAmb);
+    glMaterialfv (GL_FRONT_AND_BACK, GL_DIFFUSE, materialDif);
+    glMaterialfv (GL_FRONT_AND_BACK, GL_SPECULAR, materialSpec);
+    glMaterialf (GL_FRONT_AND_BACK, GL_SHININESS, materialShininess);
+
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK,GL_DIFFUSE);
+
+    glHint (GL_LINE_SMOOTH_HINT, GL_NICEST);
+
+// glewInit();
+// setShadersARB();
+
+    texture[0]=LoadTexture("./data/stone.bmp");
+    texture[1]=LoadTexture("./data/bukva.bmp");
+    texture[2]=LoadTexture("./data/karamel.bmp");
+    texture[3]=LoadTexture("./data/trava.bmp");
+
+    glLoadPrimitive();
+
+    quadObj = gluNewQuadric();  
+}
+
+void glDestroy(void)
+{
+    gluDeleteQuadric(quadObj);   
+}
+
+int main ()
+{
+  
+    if ( SDL_Init(SDL_INIT_TIMER|SDL_INIT_VIDEO) < 0 ) {
+        printf("Unable to init SDL: %s\n", SDL_GetError());
+        exit(1);
+    }
+      TTF_Init();
+     
+      atexit(SDL_Quit);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 5);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 6);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 5);
+    
+    SDL_GL_SetAttribute( SDL_GL_SWAP_CONTROL, 0 );
+    
+    if ( SDL_SetVideoMode(winWidth, winHeight,32,SDL_OPENGL) == NULL ) {
+        printf("Unable to set %d x %d video: %s\n", winWidth, winHeight, SDL_GetError());
+        exit(1);
+    }
+    
+       f = Load3ds("./objects/ELEPHANT_M.3DS");
+    
+   // f = Load3ds("./objects/BMW325I_.3DS");
+       
+       
+       
+       //for (int i = 0; i < f->nmeshes; ++i) mesh_dump(f->meshes[i]);
+       
+   
+       
+       for (int i = 0; i < f->nmeshes; ++i)
+        {
+	  gl_Lists[i] = GL_DrawMesh(f->meshes[i]);
+	  
+	}
+  
+   //  Font = TTF_OpenFont("arial.ttf", 8);
+     
+    lock = SDL_CreateMutex();
+
+//Initialisation parametrs OpenGL renders
+    glInit();
+
+    SDL_TimerID my_timer_id = SDL_AddTimer(1000, my_callbackfunc, my_callback_param);
+
+    int done=0;
+    while(done == 0) {
+
+        SDL_Event event;
+
+        while ( SDL_PollEvent(&event) ) {
+            if ( event.type == SDL_QUIT ) {
+                done = 1;
+            }
+            if ( event.type == SDL_KEYDOWN ) {
+                if ( event.key.keysym.sym == SDLK_ESCAPE ) {
+                    done = 1;
+                }
+            }
+            if ((event.type == SDL_MOUSEBUTTONDOWN))
+            {
+
+//                	 mx = event.button.x;
+  //              	 my = event.button.y;
+//
+  //              	 angleX = (GLfloat)(360*mx/winWidth - 180);
+    //                angleY = (GLfloat)(360*my/winHeight - 180);
+        
+            }
+        }//while ( SDL_PollEvent(&event) )
+
+        if(SDL_GetMouseState(&mx, &my)&SDL_BUTTON(1))
+        {
+            angleX = (GLfloat)(360*mx/winWidth - 180);
+            angleY = (GLfloat)(360*my/winHeight - 180);
+        }
+
+        
+        SDL_mutexP(lock);
+
+           DrawGLScene();
+
+        SDL_mutexV(lock);
+
+//       glFlush();
+        SDL_GL_SwapBuffers();
+		
+        fps++;
+	
+    }
+
+    glDestroy();
+
+    SDL_DestroyMutex(lock);
+
+    SDL_Quit();
+
+    return 0;
+
+}
+
+void DrawGLScene() {
+
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glLoadIdentity();
+    glTranslatef(0.0f,0.0f,-5.0f);        // �������� ������ ������
+    
+    
+  //  xrf -= 0.15F; if (abs(xrf)==360)  xrf=0;
+  //  yrf -= 0.2F;  if (abs(yrf)==360)  yrf=0;
+  //  zrf -= 0.25F; if (abs(zrf)==360)  zrf=0;
+ 
+    if SDL_BUTTON(1)
+    {
+        glRotatef(angleX,0.0F,1.0F,0.0F);
+        glRotatef(angleY,1.0F,0.0F,0.0F);
+    }
+    else
+    {
+//        glRotatef(xrf, 1.0f, 0.0f, 0.0f);        // �������� ���� �� X, Y & Z
+//        glRotatef(yrf, 0.0f, 1.0f, 0.0f);        // �������� ���� �� X, Y & Z
+//        glRotatef(zrf, 0.0f, 0.0f, 1.0f);        // �������� ���� �� X, Y & Z
+    }
+    
+ glEnable(GL_LIGHTING);
+
+
+ //glEnable(GL_NORMALIZE);
+ //glEnable(GL_AUTO_NORMAL);
+ //glEnable(GL_TEXTURE_2D);	
+// glEnable(GL_CULL_FACE);
+ 
+ 
+//    glEnable(GL_BLEND);
+//    glBlendFunc(GL_SRC_COLOR, GL_ONE_MINUS_SRC_COLOR);
+   
+//  glBindTexture( GL_TEXTURE_2D, texture[2]);
+   
+   
+  //  gluQuadricTexture(quadObj, GL_TRUE);
+  //  gluSphere(quadObj, 1.3, 20, 20);
+    
+   //gluQuadricTexture(quadObj, GL_TRUE);
+   //gluSphere(quadObj, 1.3, 20, 20);
+   
+  // glBindTexture( GL_TEXTURE_2D, texture[3]);
+   
+   glPushMatrix();  
+  //   glScalef(0.003f,0.003f,0.003f);
+   
+//    glTranslatef(-0.6f,0.5f,0.0f);
+      
+    //  glBindTexture( GL_TEXTURE_2D, texture[4]);
+    
+      for (int i = 0; i < f->nmeshes; ++i)   
+        glCallList(gl_Lists[i]);   
+   
+    glPopMatrix();
+    
+  /*  
+  glBindTexture( GL_TEXTURE_2D, texture[3]);   
+   glPushMatrix();  
+  //   glScalef(0.003f,0.003f,0.003f);
+   
+    glTranslatef(0.6f,0.5f,0.0f);
+   
+      glCallList(gl_Lists[0]);   
+      
+      glBindTexture( GL_TEXTURE_2D, texture[4]);
+    
+      for (int i = 1; i < f->nmeshes; ++i)   
+        glCallList(gl_Lists[i]);   
+   
+    glPopMatrix();
+   
+ /* 
+
+
+  glPushMatrix();
+   
+     glTranslatef(-0.5f, -0.5f, 0.0f);
+     gluQuadricTexture(quadObj, GL_TRUE);
+     gluSphere(quadObj, 1.3, 20, 20);
+     
+  glPopMatrix();   
+  
+ /*     
+
+ 
+//  glCallList(ls_qube);
+
+ //   DrawTextGL(1,1,Font,"Hello world\n");
+    
+//    glReadPixels( );
+    
+    glPushMatrix();
+      glScalef(0.5f,1.5f,0.5f);
+      glCallList(ls_qube);
+
+	glDisable(GL_BLEND);
+      glBindTexture( GL_TEXTURE_2D, texture[3]);
+      gluQuadricTexture(quadObj, GL_TRUE);
+      gluSphere(quadObj, 1.3, 20, 20);
+      	glEnable(GL_BLEND);
+    glPopMatrix();
+
+    glBindTexture( GL_TEXTURE_2D, texture[2]);
+
+    glPushMatrix();
+    glScalef(1.5f,0.5f,0.5f);
+    glCallList(ls_qube);
+    glPopMatrix();
+
+    glPushMatrix();
+    glScalef(0.5f,0.5f,1.5f);
+    glCallList(ls_qube);
+    glPopMatrix();    
+    
+
+    GLint viewport[4]; // параметры viewport-a.
+    GLdouble projection[16]; // матрица проекции.
+    GLdouble modelview[16]; // видовая матрица.
+    GLdouble vx,vy,vz; // координаты курсора мыши в системе координат viewport-a.
+ 
+    glGetIntegerv(GL_VIEWPORT,viewport); // узнаём параметры viewport-a.
+    glGetDoublev(GL_PROJECTION_MATRIX,projection); // узнаём матрицу проекции.
+    glGetDoublev(GL_MODELVIEW_MATRIX,modelview); // узнаём видовую матрицу.
+    
+    
+    glReadBuffer(GL_FRONT);   
+    glReadPixels(mx, winHeight-my, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, pixel);
+  //  printf("R: %i \n",(int)pixel[0]);
+  //  printf("G: %i \n",(int)pixel[1]);
+  //  printf("B: %i \n",(int)pixel[2]);
+    
+   glDisable(GL_TEXTURE_2D);	  
+   glDisable(GL_LIGHTING);
+   	    
+   	    
+   glPushMatrix();
+  
+   // glLoadIdentity();
+    glTranslatef(-2.0f,1.5f,0.5f);
+    
+     glBegin(GL_QUADS);     
+	  glNormal3f(0.0f, 0.0f, 1.0f);// �������� �����
+	  glColor4f(pixel[0]/255.0f, pixel[1]/255.0f,pixel[2]/255.0f,1.0f);	
+	//    glColor4f(1.0f, 1.0f,1.0f,1.0f);	
+            glVertex3f(-1.0f, -1.0f, 0.0f);	// ��� ����
+            glVertex3f( 1.0f, -1.0f, 0.0f);	// ��� �����
+            glVertex3f( 1.0f, 1.0f, 0.0f);	// ���� �����
+            glVertex3f(-1.0f, 1.0f, 0.0f);	// ���� ����
+     glEnd();    
+    glPopMatrix();
+    
+
+/*
+  glPushMatrix();
+  
+    glLoadIdentity();
+    glTranslatef(0.0f,0.0f,-5.0f);        // �������� ������ ������
+    
+    glEnable(GL_LIGHTING);  
+    glEnable(GL_TEXTURE_2D);
+    
+      glPushMatrix();
+      glScalef(0.5f,1.5f,0.5f);
+      glCallList(ls_qube);
+
+	glDisable(GL_BLEND);
+      glBindTexture( GL_TEXTURE_2D, texture[3]);
+      gluQuadricTexture(quadObj, GL_TRUE);
+      gluSphere(quadObj, 1.3, 20, 20);
+      	glEnable(GL_BLEND);
+    glPopMatrix();
+
+    glBindTexture( GL_TEXTURE_2D, texture[2]);
+
+    glPushMatrix();
+    glScalef(1.5f,0.5f,0.5f);
+    glCallList(ls_qube);
+    glPopMatrix();
+
+    glPushMatrix();
+    glScalef(0.5f,0.5f,1.5f);
+    glCallList(ls_qube);
+    glPopMatrix();
+    
+   glPopMatrix();
+ */
+
+}
+
+Uint32 my_callbackfunc(Uint32 interval, void *param) {
+    printf("FPS = %d\n", fps);
+    fps=0;
+    return interval;
+}
